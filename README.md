@@ -54,7 +54,7 @@ service.py (84 lines)
 Requires Python 3.10+.
 
 ```bash
-git clone https://github.com/<you>/localrat-cpu.git
+git clone https://github.com/ako-bot/localrat-cpu.git
 cd localrat-cpu
 pip install -r requirements.txt
 ```

@@ -39,7 +39,7 @@ Estructura de un archivo con números de línea.
 Requiere Python 3.10 o superior.
 
 ```bash
-git clone https://github.com/<tu-usuario>/localrat-cpu.git
+git clone https://github.com/ako-bot/localrat-cpu.git
 cd localrat-cpu
 pip install -r requirements.txt
 ```
