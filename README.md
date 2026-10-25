@@ -39,6 +39,9 @@ Structure of one file with line numbers.
 - **JS/TS**: functions, classes, arrow functions, `export default`.
 - **Shell / PowerShell**: function definitions (comments are not listed).
 - **Markdown**: headings (ignoring code blocks).
+- **Go, Rust, Ruby, PHP, Java, Kotlin, C#, Swift**: functions, methods and type declarations.
+
+Other file types return a short "not supported" note instead of a guess.
 
 ```
 outline("src/auth/service.py")
@@ -73,7 +76,7 @@ To locate code, use the MCP tools `find` (path:line) and `outline` (functions wi
 
 ## Limits
 
-- Searches files with common text extensions only (`.py`, `.js`, `.ts`, `.md`, `.json`, `.toml`, `.yml`, `.sh`, `.ps1`…); files over 1 MB are skipped.
+- Searches every text file; binary files (a NUL byte in the first 8 KB) and files over 1 MB are skipped.
 - Non-Python outlines are regex-based: good enough to navigate, not a full parser, and without end lines.
 - Search is pure Python. Fine for small and medium repos; on very large monorepos `ripgrep` will be faster.
 

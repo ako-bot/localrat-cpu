@@ -10,8 +10,8 @@ import subprocess
 from pathlib import Path
 
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".mypy_cache", ".pytest_cache"}
-TEXT_EXTS = {".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".md", ".txt", ".toml", ".yml", ".yaml", ".html", ".css", ".sh", ".ps1", ".cfg", ".ini"}
 MAX_FILE_BYTES = 1_000_000
+BINARY_SNIFF_BYTES = 8192
 MAX_LINE_CHARS = 200
 CASE_MODES = {"smart", "sensitive", "insensitive"}
 
@@ -45,13 +45,42 @@ def _iter_files(root: Path, glob: str):
     for path in candidates:
         if SKIP_DIRS.intersection(path.relative_to(root).parts[:-1]):
             continue
-        if path.suffix.lower() not in TEXT_EXTS or not path.match(glob):
+        if not path.match(glob):
             continue
         try:
             if path.is_file() and path.stat().st_size <= MAX_FILE_BYTES:
                 yield path
         except OSError:
             continue
+
+
+def _read_lines(path: Path) -> list[str] | None:
+    """Lines of a text file, or None if it is binary (NUL byte in its head) or unreadable."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(BINARY_SNIFF_BYTES)
+            if b"\0" in head:
+                return None
+            data = head + fh.read()
+    except OSError:
+        return None
+    return data.decode("utf-8", errors="ignore").splitlines()
+
+
+def _hit_blocks(rel: str, lines: list[str], matches: list[int], context: int) -> list[list[str]]:
+    """Hit lines with their context; overlapping or adjacent windows merge into one block."""
+    spans: list[list[int]] = []
+    for i in matches:
+        lo, hi = max(0, i - context), min(len(lines), i + context + 1)
+        if spans and lo <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], hi)
+        else:
+            spans.append([lo, hi])
+    hit_set = set(matches)
+    return [
+        [f"{rel}:{j + 1}{':' if j in hit_set else '-'} {lines[j].strip()[:MAX_LINE_CHARS]}" for j in range(lo, hi)]
+        for lo, hi in spans
+    ]
 
 
 def _compile(query: str, regex: bool, case: str, word: bool) -> re.Pattern:
@@ -83,11 +112,10 @@ def find(query: str, root: str = ".", glob: str = "*", regex: bool = False,
 
     out, hits, truncated = [], 0, False
     for path in _iter_files(base, glob):
-        try:
-            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        except OSError:
+        lines = _read_lines(path)
+        if lines is None:
             continue
-        rel = path.relative_to(base).as_posix()
+        matches = []
         for i, line in enumerate(lines):
             if not pattern.search(line):
                 continue
@@ -95,12 +123,11 @@ def find(query: str, root: str = ".", glob: str = "*", regex: bool = False,
                 truncated = True
                 break
             hits += 1
+            matches.append(i)
+        for block in _hit_blocks(path.relative_to(base).as_posix(), lines, matches, context):
             if context and out:
                 out.append("--")
-            lo, hi = max(0, i - context), min(len(lines), i + context + 1)
-            for j in range(lo, hi):
-                mark = ":" if j == i else "-"
-                out.append(f"{rel}:{j + 1}{mark} {lines[j].strip()[:MAX_LINE_CHARS]}")
+            out.extend(block)
         if truncated:
             break
     if not out:
@@ -122,6 +149,9 @@ def _outline_python(source: str) -> list[str]:
                 end = getattr(child, "end_lineno", child.lineno)
                 rows.append(f"{'  ' * depth}{start}-{end} {kind} {child.name}")
                 visit(child, depth + 1)
+            elif isinstance(child, (ast.stmt, ast.excepthandler, ast.match_case)):
+                # defs inside if/try/with/for/match blocks keep the enclosing depth
+                visit(child, depth)
 
     visit(tree, 0)
     return rows
@@ -134,9 +164,23 @@ _JS = re.compile(
 _SHELL = re.compile(r"^\s*(?:function\s+[\w-]+|[\w-]+\s*\(\)\s*\{)")
 _PS1 = re.compile(r"^\s*(?:function|filter)\s+[\w-]+", re.IGNORECASE)
 _MD = re.compile(r"^#{1,6}\s+\S")
+_GO = re.compile(r"^(?:func\s|type\s+\w+\s+(?:struct|interface)\b)")
+_RUST = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe)\s+)*(?:fn|struct|enum|trait|impl|mod|union)\b")
+_RUBY = re.compile(r"^\s*(?:def|class|module)\s")
+_PHP = re.compile(r"^\s*(?:(?:abstract|final|public|private|protected|static|readonly)\s+)*(?:function|class|interface|trait|enum)\s+&?\w")
+# Java, Kotlin, C#, Swift: type declarations, fun/func, and methods with at least one modifier
+_CLIKE = re.compile(
+    r"^\s*(?:(?:public|private|protected|internal|static|final|abstract|sealed|open|override|virtual"
+    r"|async|suspend|data|inline|partial|readonly)\s+)*(?:class|interface|enum|record|struct|object|fun|func)\s+\w"
+    r"|^\s*(?:(?:public|private|protected|internal|static|final|abstract|override|virtual|async|synchronized)\s+)+"
+    r"[\w<>\[\],.?]+(?:\s+[\w<>\[\],.?]+)*\s+\w+\s*\("
+)
 _PATTERNS = {
-    ".js": _JS, ".jsx": _JS, ".ts": _JS, ".tsx": _JS,
-    ".sh": _SHELL, ".ps1": _PS1, ".md": _MD,
+    ".js": _JS, ".jsx": _JS, ".ts": _JS, ".tsx": _JS, ".mjs": _JS, ".cjs": _JS, ".mts": _JS, ".cts": _JS,
+    ".sh": _SHELL, ".bash": _SHELL, ".zsh": _SHELL, ".ps1": _PS1, ".psm1": _PS1,
+    ".md": _MD, ".markdown": _MD,
+    ".go": _GO, ".rs": _RUST, ".rb": _RUBY, ".php": _PHP,
+    ".java": _CLIKE, ".kt": _CLIKE, ".kts": _CLIKE, ".cs": _CLIKE, ".swift": _CLIKE,
 }
 
 
@@ -146,22 +190,23 @@ def outline(file: str) -> str:
     if not path.is_file():
         return f"[ERROR] file not found: {path}"
     text = path.read_text(encoding="utf-8", errors="ignore")
-    total = text.count("\n") + 1
+    header = f"{path.name} ({len(text.splitlines())} lines)"
     suffix = path.suffix.lower()
     if suffix == ".py":
         try:
             rows = _outline_python(text)
         except SyntaxError as exc:
             return f"[ERROR] syntax error at line {exc.lineno}: {exc.msg}"
+    elif suffix not in _PATTERNS:
+        return f"{header}\n(outline not supported for {suffix or 'files without extension'}; use find)"
     else:
-        pattern = _PATTERNS.get(suffix, _JS)
+        pattern = _PATTERNS[suffix]
         in_fence = False
         rows = []
         for n, line in enumerate(text.splitlines(), 1):
-            if suffix == ".md" and line.lstrip().startswith(("```", "~~~")):
+            if pattern is _MD and line.lstrip().startswith(("```", "~~~")):
                 in_fence = not in_fence
                 continue
             if not in_fence and pattern.match(line):
                 rows.append(f"{n} {line.strip()[:MAX_LINE_CHARS]}")
-    header = f"{path.name} ({total} lines)"
     return header + "\n" + ("\n".join(rows) if rows else "(no functions, classes or headings found)")

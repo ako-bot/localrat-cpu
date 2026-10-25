@@ -33,6 +33,9 @@ Estructura de un archivo con números de línea.
 - **JS/TS**: funciones, clases, funciones flecha y `export default`.
 - **Shell / PowerShell**: definiciones de funciones (los comentarios no se listan).
 - **Markdown**: encabezados (ignorando los bloques de código).
+- **Go, Rust, Ruby, PHP, Java, Kotlin, C#, Swift**: funciones, métodos y declaraciones de tipos.
+
+Con otros tipos de archivo devuelve un aviso breve de «no soportado» en vez de adivinar.
 
 ## Instalación
 
@@ -58,7 +61,7 @@ Para localizar código, usa las herramientas MCP `find` (ruta:línea) y `outline
 
 ## Límites
 
-- Solo busca en archivos con extensiones de texto habituales (`.py`, `.js`, `.ts`, `.md`, `.json`, `.toml`, `.yml`, `.sh`, `.ps1`…); se saltan los de más de 1 MB.
+- Busca en todos los archivos de texto; se saltan los binarios (un byte NUL en los primeros 8 KB) y los de más de 1 MB.
 - Fuera de Python, `outline` usa expresiones regulares: suficiente para navegar, pero no es un analizador completo y no da la línea final.
 - La búsqueda es Python puro. Va bien en repos pequeños y medianos; en monorepos muy grandes `ripgrep` será más rápido.
 
